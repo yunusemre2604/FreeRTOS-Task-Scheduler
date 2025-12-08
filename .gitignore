@@ -1,0 +1,4 @@
+build/
+freertos_sim
+*.o
+.vscode/
