@@ -236,4 +236,4 @@ void Scheduler_Init(void) { }
 void Scheduler_Start(void) {
     xTaskCreate(vSchedulerController, "Controller", configMINIMAL_STACK_SIZE * 4, NULL, configMAX_PRIORITIES - 1, NULL);
     vTaskStartScheduler();
-}
+} 
