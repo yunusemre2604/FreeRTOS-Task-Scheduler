@@ -13,9 +13,11 @@ SimTask taskList[MAX_TASKS];
 int taskCount = 0;
 int globalTime = 0;
 
+// Dinamik İsimlendirme Sayacı
+int dynamicNameCounter = 1;
+
 extern void vGenericTask(void *pvParameters);
 
-// Renk paleti
 const char* colors[] = {ANSI_BLUE, ANSI_RED, ANSI_GREEN, ANSI_YELLOW, ANSI_MAGENTA, ANSI_CYAN};
 
 // Çıktı Fonksiyonu
@@ -43,23 +45,23 @@ void ReadTasksFromFile(const char* filename)
     int arrival, prio, burst;
     int id_counter = 0;
 
-    // giris.txt formatı: varış, öncelik, süre
     while (fscanf(file, "%d, %d, %d", &arrival, &prio, &burst) == 3) {
         if(taskCount >= MAX_TASKS) break;
 
         taskList[taskCount].id = id_counter;
-        
-        // İsimlendirme task1, task2... şeklinde
-        snprintf(taskList[taskCount].taskName, 20, "task%d", id_counter + 1);
-        
+        snprintf(taskList[taskCount].taskName, 20, "T_ID%d", id_counter);
+        taskList[taskCount].displayName[0] = '\0';
+        taskList[taskCount].nameAssigned = 0;
+
         taskList[taskCount].arrivalTime = arrival;
         taskList[taskCount].initialPriority = prio;
         taskList[taskCount].currentPriority = prio;
         taskList[taskCount].burstTime = burst;
         taskList[taskCount].remainingTime = burst;
-        
-        // Başlangıçta son aktivite zamanı = varış zamanı
         taskList[taskCount].lastActiveTime = arrival;
+        
+        // YENİ: Başlangıçta kuyruk zamanı = varış zamanı
+        taskList[taskCount].queueEntryTime = arrival;
 
         taskList[taskCount].state = STATE_WAITING;
         taskList[taskCount].handle = NULL;
@@ -78,29 +80,25 @@ void vSchedulerController(void *pvParameters)
     (void) pvParameters;
     
     char *msg = NULL; 
-
-    // ROUND ROBIN HAFIZASI (Prio 3 için)
-    static int lastPrio3Index = -1;
-
-    // SON ÇALIŞAN GÖREVİN ID'SİNİ TUTAN DEĞİŞKEN
-    // Başlangıçta -1 yapıyoruz ki ilk giren görev her türlü "başladı" desin.
     static int lastScheduledTaskId = -1;
 
     for(;;)
     {
-        // --- 1. ZAMANAŞIMI (TIMEOUT) KONTROLÜ ---
+        // --- 1. ZAMANAŞIMI KONTROLÜ ---
         for(int i=0; i<taskCount; i++) {
             if(taskList[i].state != STATE_TERMINATED && taskList[i].state != STATE_WAITING) {
-                
                 if ((globalTime - taskList[i].lastActiveTime) >= 20) {
                     
-                    asprintf(&msg, "%s zamanasimi", taskList[i].taskName);
+                    if(taskList[i].nameAssigned == 0) {
+                        snprintf(taskList[i].displayName, 20, "task%d", dynamicNameCounter++);
+                        taskList[i].nameAssigned = 1;
+                    }
+
+                    asprintf(&msg, "%s zamanasimi", taskList[i].displayName);
                     PrintTaskInfo(&taskList[i], msg);
                     free(msg); 
                     
-                    if(taskList[i].handle != NULL) {
-                        vTaskDelete(taskList[i].handle);
-                    }
+                    if(taskList[i].handle != NULL) vTaskDelete(taskList[i].handle);
                     taskList[i].state = STATE_TERMINATED;
                 }
             }
@@ -109,22 +107,19 @@ void vSchedulerController(void *pvParameters)
         // --- 2. YENİ GÖREVLERİ AL ---
         for(int i=0; i<taskCount; i++) {
             if(taskList[i].state == STATE_WAITING && taskList[i].arrivalTime <= globalTime) {
-                xTaskCreate(vGenericTask, taskList[i].taskName, configMINIMAL_STACK_SIZE, 
+                xTaskCreate(vGenericTask, "Generic", configMINIMAL_STACK_SIZE, 
                             NULL, tskIDLE_PRIORITY + 1, &taskList[i].handle);
-                
                 if(taskList[i].handle != NULL) vTaskSuspend(taskList[i].handle);
                 
                 taskList[i].state = STATE_READY;
-                // Yeni geldiği için lastActiveTime zaten arrivalTime
-                
-                // Buradaki "başladı" mesajı silindi, aşağıda yürütme anında verilecek.
+                // Yeni gelen görev için queueEntryTime zaten arrivalTime olarak ayarlı
             }
         }
 
         // --- 3. ÇALIŞACAK GÖREVİ SEÇ ---
         SimTask *selectedTask = NULL;
 
-        // ADIM A: Prio 0, 1, 2
+        // ADIM A: Prio 0, 1, 2 (Burayı BOZMADIK, ID sırasına göre FCFS)
         for(int p=0; p<3; p++) {
             for(int i=0; i<taskCount; i++) {
                 if(taskList[i].state == STATE_READY && taskList[i].currentPriority == p) {
@@ -134,68 +129,67 @@ void vSchedulerController(void *pvParameters)
             }
         }
 
-        // ADIM B: Prio 3 (Round Robin)
+        // ADIM B: Prio 3 (Round Robin - ARTIK FIFO MANTIĞI İLE ÇALIŞIYOR)
+        // Burada ID sırasına değil, Kuyruğa Giriş Zamanına (queueEntryTime) bakıyoruz.
         if(selectedTask == NULL) {
-            int count = 0;
-            int i = (lastPrio3Index + 1) % taskCount; 
+            SimTask *bestCandidate = NULL;
+            int minTime = 2147483647; // Max Int
 
-            while(count < taskCount) {
+            for(int i=0; i<taskCount; i++) {
                 if(taskList[i].state == STATE_READY && taskList[i].currentPriority == 3) {
-                    selectedTask = &taskList[i];
-                    lastPrio3Index = i; // Hafızayı güncelle
-                    goto TASK_FOUND;
+                    // En küçük (en eski) zaman damgasını bul
+                    if(taskList[i].queueEntryTime < minTime) {
+                        minTime = taskList[i].queueEntryTime;
+                        bestCandidate = &taskList[i];
+                    }
+                    // Zamanlar eşitse ID'ye bak (Stabilite için)
+                    else if(taskList[i].queueEntryTime == minTime) {
+                        if(bestCandidate == NULL || taskList[i].id < bestCandidate->id) {
+                            bestCandidate = &taskList[i];
+                        }
+                    }
                 }
-                i = (i + 1) % taskCount;
-                count++;
             }
+            selectedTask = bestCandidate;
         }
 
         TASK_FOUND:
 
         if(selectedTask != NULL) {
+            
+            // İsim Atama
+            if(selectedTask->nameAssigned == 0) {
+                snprintf(selectedTask->displayName, 20, "task%d", dynamicNameCounter++);
+                selectedTask->nameAssigned = 1;
+            }
+
             // --- 4. GÖREVİ YÜRÜT ---
-            
-            // --- DEĞİŞİKLİK BURADA: BAŞLADI/YÜRÜTÜLÜYOR MANTIĞI ---
-            
-            // Eğer seçilen görev, bir önceki döngüde çalışan görevden farklıysa
-            // (yani araya başka iş girdiyse veya ilk kez çalışıyorsa) -> "başladı"
             if(selectedTask->id != lastScheduledTaskId) {
-                 asprintf(&msg, "%s basladi", selectedTask->taskName);
+                 asprintf(&msg, "%s basladi", selectedTask->displayName);
                  PrintTaskInfo(selectedTask, msg);
                  free(msg);
             } 
-            // Eğer aynı görev üst üste çalışmaya devam ediyorsa -> "yürütülüyor"
             else {
-                 asprintf(&msg, "%s yurutuluyor", selectedTask->taskName);
+                 asprintf(&msg, "%s yurutuluyor", selectedTask->displayName);
                  PrintTaskInfo(selectedTask, msg);
                  free(msg);
             }
 
-            // Şu an çalışan görevi hafızaya al
             lastScheduledTaskId = selectedTask->id;
 
-            // FreeRTOS taskını uyandır
-            if(selectedTask->handle != NULL) {
-                vTaskResume(selectedTask->handle);
-            }
+            if(selectedTask->handle != NULL) vTaskResume(selectedTask->handle);
             
-            // Simülasyon Hızı (75ms)
             vTaskDelay(pdMS_TO_TICKS(75));
             
             globalTime++;
             selectedTask->remainingTime--;
-            
-            // Son Aktivite zamanını güncelle
             selectedTask->lastActiveTime = globalTime;
             
-            // Görevi durdur
-            if(selectedTask->handle != NULL) {
-                vTaskSuspend(selectedTask->handle);
-            }
+            if(selectedTask->handle != NULL) vTaskSuspend(selectedTask->handle);
 
             // --- 5. DURUM GÜNCELLEME ---
             if(selectedTask->remainingTime <= 0) {
-                asprintf(&msg, "%s sonlandi", selectedTask->taskName);
+                asprintf(&msg, "%s sonlandi", selectedTask->displayName);
                 PrintTaskInfo(selectedTask, msg);
                 free(msg);
                 
@@ -204,21 +198,23 @@ void vSchedulerController(void *pvParameters)
                     selectedTask->handle = NULL;
                 }
                 selectedTask->state = STATE_TERMINATED;
-                
-                // Görev bittiği için "son çalışan" hafızasını sıfırla ki
-                // aynı ID'li yeni bir görev gelirse karışmasın (gerçi ID unique ama olsun)
                 lastScheduledTaskId = -1; 
             } 
             else {
-                // FEEDBACK KONTROLÜ
+                // YENİ: Görev çalıştı, sırasını savdı. 
+                // Kuyruğun en arkasına geçmesi için zaman damgasını güncelliyoruz.
+                // Bu sayede Round Robin döngüsü sağlanır.
+                selectedTask->queueEntryTime = globalTime;
+
+                // FEEDBACK
                 if(selectedTask->currentPriority > 0 && selectedTask->currentPriority < 3) {
                     selectedTask->currentPriority++; 
-                    asprintf(&msg, "%s askida (Prio Dusuruldu)", selectedTask->taskName);
+                    asprintf(&msg, "%s askida (Prio Dusuruldu)", selectedTask->displayName);
                     PrintTaskInfo(selectedTask, msg);
                     free(msg);
                 } 
                 else if(selectedTask->currentPriority == 3) {
-                    asprintf(&msg, "%s askida", selectedTask->taskName);
+                    asprintf(&msg, "%s askida", selectedTask->displayName);
                     PrintTaskInfo(selectedTask, msg);
                     free(msg);
                 }
@@ -229,11 +225,7 @@ void vSchedulerController(void *pvParameters)
         } else {
             // IDLE
             globalTime++;
-            
-            // IDLE durumunda "son çalışan" hafızasını sıfırla.
-            // Böylece Idle'dan sonra bir görev gelirse mutlaka "başladı" yazar.
             lastScheduledTaskId = -1;
-            
             vTaskDelay(pdMS_TO_TICKS(75));
         }
 

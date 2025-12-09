@@ -15,7 +15,6 @@
 #define ANSI_CYAN    "\x1b[36m"
 #define ANSI_WHITE   "\x1b[37m"
 
-// Maksimum görev sayısı (Senin 25 satırlık girdin için arttırıldı)
 #define MAX_TASKS 50
 
 typedef enum {
@@ -28,15 +27,22 @@ typedef enum {
 
 typedef struct {
     int id;
-    char taskName[20];
+    
+    // Dinamik İsimlendirme Alanları
+    char displayName[20]; 
+    int nameAssigned;     
+    
+    char taskName[20];    
     int arrivalTime;
     int initialPriority;
     int currentPriority;
     int burstTime;
     int remainingTime;
-    int startTime;          // Timeout kontrolü için sisteme giriş zamanı
-    // YENİ ALAN: Zamanaşımı kontrolü için son aktif olma zamanı
-    int lastActiveTime;
+    int lastActiveTime;     
+
+    // YENİ: Kuyruğa giriş zamanı (Sıralama için)
+    int queueEntryTime;
+
     TaskState state;
     TaskHandle_t handle;
     char color[10];
