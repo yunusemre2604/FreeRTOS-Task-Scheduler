@@ -11,7 +11,7 @@
 
 SimTask taskList[MAX_TASKS];
 int taskCount = 0;
-int globalTime = 0;
+int globalTime = 0;  
 
 // Dinamik İsimlendirme Sayacı
 int dynamicNameCounter = 1;
@@ -40,7 +40,7 @@ void ReadTasksFromFile(const char* filename)
     if (file == NULL) {
         perror("Dosya okuma hatasi");
         exit(1);
-    }
+    } 
     
     int arrival, prio, burst;
     int id_counter = 0;
@@ -234,9 +234,10 @@ void vSchedulerController(void *pvParameters)
         for(int i=0; i<taskCount; i++) {
             if(taskList[i].state != STATE_TERMINATED) active++;
         }
+        
         if(active == 0) {
             printf("\n--- Tum gorevler tamamlandi ---\n");
-            exit(0);
+                 exit(0);
         }
     }
 }
