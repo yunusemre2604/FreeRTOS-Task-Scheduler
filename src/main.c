@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
     // Varsayılan dosya giris.txt, argüman varsa onu kullan
     const char* filename = "giris.txt";
     if(argc > 1) {
-        filename = argv[1];
+        filename = argv[1]; 
     }
     
     ReadTasksFromFile(filename);
