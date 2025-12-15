@@ -15,8 +15,6 @@
 #define ANSI_CYAN    "\x1b[36m"
 #define ANSI_WHITE   "\x1b[37m"
 
-#define MAX_TASKS 50
-
 typedef enum {
     STATE_WAITING,
     STATE_READY,
@@ -25,10 +23,10 @@ typedef enum {
     STATE_TERMINATED
 } TaskState;
 
-typedef struct {
+// Linked List olması için struct ismini typedef öncesi belirttik
+typedef struct SimTask {
     int id;
     
-    // Dinamik İsimlendirme Alanları
     char displayName[20]; 
     int nameAssigned;     
     
@@ -40,12 +38,15 @@ typedef struct {
     int remainingTime;
     int lastActiveTime;     
 
-    // YENİ: Kuyruğa giriş zamanı (Sıralama için)
     int queueEntryTime;
 
     TaskState state;
     TaskHandle_t handle;
     char color[10];
+
+    // YENİ: Bir sonraki görevi gösteren işaretçi (Linked List)
+    struct SimTask *next; 
+
 } SimTask;
 
 void Scheduler_Init(void);

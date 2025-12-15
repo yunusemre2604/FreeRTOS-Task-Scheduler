@@ -9,18 +9,15 @@
 #include "task.h"
 #include "scheduler.h"
 
-SimTask taskList[MAX_TASKS];
-int taskCount = 0;
+// Linked List Başlangıç İşaretçisi
+SimTask *taskListHead = NULL;
 int globalTime = 0;
-
-// Dinamik İsimlendirme Sayacı
 int dynamicNameCounter = 1;
 
 extern void vGenericTask(void *pvParameters);
 
 const char* colors[] = {ANSI_BLUE, ANSI_RED, ANSI_GREEN, ANSI_YELLOW, ANSI_MAGENTA, ANSI_CYAN};
 
-// Çıktı Fonksiyonu
 void PrintTaskInfo(SimTask* task, char* statusMsg)
 {
     printf("%s%10.4f sn %-30s (id:%04d  oncelik:%d  kalan sure:%d sn)%s\n",
@@ -34,6 +31,19 @@ void PrintTaskInfo(SimTask* task, char* statusMsg)
     fflush(stdout);
 }
 
+// Listeye eleman ekleme
+void AddTaskToLinkedList(SimTask *newTask) {
+    if (taskListHead == NULL) {
+        taskListHead = newTask;
+    } else {
+        SimTask *temp = taskListHead;
+        while (temp->next != NULL) {
+            temp = temp->next;
+        }
+        temp->next = newTask;
+    }
+}
+
 void ReadTasksFromFile(const char* filename)
 {
     FILE *file = fopen(filename, "r");
@@ -44,35 +54,44 @@ void ReadTasksFromFile(const char* filename)
     
     int arrival, prio, burst;
     int id_counter = 0;
+    int count = 0;
 
     while (fscanf(file, "%d, %d, %d", &arrival, &prio, &burst) == 3) {
-        if(taskCount >= MAX_TASKS) break;
-
-        taskList[taskCount].id = id_counter;
-        snprintf(taskList[taskCount].taskName, 20, "T_ID%d", id_counter);
-        taskList[taskCount].displayName[0] = '\0';
-        taskList[taskCount].nameAssigned = 0;
-
-        taskList[taskCount].arrivalTime = arrival;
-        taskList[taskCount].initialPriority = prio;
-        taskList[taskCount].currentPriority = prio;
-        taskList[taskCount].burstTime = burst;
-        taskList[taskCount].remainingTime = burst;
-        taskList[taskCount].lastActiveTime = arrival;
         
-        // YENİ: Başlangıçta kuyruk zamanı = varış zamanı
-        taskList[taskCount].queueEntryTime = arrival;
+        SimTask *newTask = (SimTask*)malloc(sizeof(SimTask));
+        if (newTask == NULL) {
+            perror("Bellek hatasi");
+            exit(1);
+        }
 
-        taskList[taskCount].state = STATE_WAITING;
-        taskList[taskCount].handle = NULL;
+        newTask->id = id_counter;
+        snprintf(newTask->taskName, 20, "T_ID%d", id_counter);
+        newTask->displayName[0] = '\0';
+        newTask->nameAssigned = 0;
+
+        newTask->arrivalTime = arrival;
+        newTask->initialPriority = prio;
+        newTask->currentPriority = prio;
+        newTask->burstTime = burst;
+        newTask->remainingTime = burst;
+        newTask->lastActiveTime = arrival;
         
-        strcpy(taskList[taskCount].color, colors[id_counter % 6]);
+        // Başlangıçta kuyruk zamanı = varış zamanı
+        newTask->queueEntryTime = arrival;
+
+        newTask->state = STATE_WAITING;
+        newTask->handle = NULL;
+        newTask->next = NULL; 
         
+        strcpy(newTask->color, colors[id_counter % 6]);
+        
+        AddTaskToLinkedList(newTask);
+
         id_counter++;
-        taskCount++;
+        count++;
     }
     fclose(file);
-    printf("[Init] %d gorev dosyadan okundu.\n", taskCount);
+    printf("[Init] %d gorev dinamik bellege (Linked List) yuklendi.\n", count);
 }
 
 void vSchedulerController(void *pvParameters)
@@ -85,79 +104,108 @@ void vSchedulerController(void *pvParameters)
     for(;;)
     {
         // --- 1. ZAMANAŞIMI KONTROLÜ ---
-        for(int i=0; i<taskCount; i++) {
-            if(taskList[i].state != STATE_TERMINATED && taskList[i].state != STATE_WAITING) {
-                if ((globalTime - taskList[i].lastActiveTime) >= 20) {
+        SimTask *iterator = taskListHead;
+        int activeTasks = 0;
+
+        while(iterator != NULL) {
+            
+            if(iterator->state != STATE_TERMINATED) activeTasks++;
+
+            if(iterator->state != STATE_TERMINATED && iterator->state != STATE_WAITING) {
+                if ((globalTime - iterator->lastActiveTime) >= 20) {
                     
-                    if(taskList[i].nameAssigned == 0) {
-                        snprintf(taskList[i].displayName, 20, "task%d", dynamicNameCounter++);
-                        taskList[i].nameAssigned = 1;
+                    if(iterator->nameAssigned == 0) {
+                        snprintf(iterator->displayName, 20, "task%d", dynamicNameCounter++);
+                        iterator->nameAssigned = 1;
                     }
 
-                    asprintf(&msg, "%s zamanasimi", taskList[i].displayName);
-                    PrintTaskInfo(&taskList[i], msg);
+                    asprintf(&msg, "%s zamanasimi", iterator->displayName);
+                    PrintTaskInfo(iterator, msg);
                     free(msg); 
                     
-                    if(taskList[i].handle != NULL) vTaskDelete(taskList[i].handle);
-                    taskList[i].state = STATE_TERMINATED;
+                    if(iterator->handle != NULL) vTaskDelete(iterator->handle);
+                    iterator->state = STATE_TERMINATED;
                 }
             }
+            iterator = iterator->next; 
+        }
+
+        // ÇIKIŞ KONTROLÜ
+        if(activeTasks == 0) {
+            printf("\n--- Tum gorevler tamamlandi ---\n");
+            SimTask *current = taskListHead;
+            while(current != NULL) {
+                SimTask *next = current->next;
+                free(current);
+                current = next;
+            }
+            exit(0);
         }
 
         // --- 2. YENİ GÖREVLERİ AL ---
-        for(int i=0; i<taskCount; i++) {
-            if(taskList[i].state == STATE_WAITING && taskList[i].arrivalTime <= globalTime) {
+        iterator = taskListHead;
+        while(iterator != NULL) {
+            if(iterator->state == STATE_WAITING && iterator->arrivalTime <= globalTime) {
                 xTaskCreate(vGenericTask, "Generic", configMINIMAL_STACK_SIZE, 
-                            NULL, tskIDLE_PRIORITY + 1, &taskList[i].handle);
-                if(taskList[i].handle != NULL) vTaskSuspend(taskList[i].handle);
+                            NULL, tskIDLE_PRIORITY + 1, &iterator->handle);
                 
-                taskList[i].state = STATE_READY;
-                // Yeni gelen görev için queueEntryTime zaten arrivalTime olarak ayarlı
+                if(iterator->handle != NULL) vTaskSuspend(iterator->handle);
+                
+                iterator->state = STATE_READY;
+                // Yeni gelen görevin queueEntryTime'ı zaten arrivalTime olarak ayarlı
             }
+            iterator = iterator->next;
         }
 
         // --- 3. ÇALIŞACAK GÖREVİ SEÇ ---
         SimTask *selectedTask = NULL;
+        iterator = taskListHead;
 
-        // ADIM A: Prio 0, 1, 2 (Burayı BOZMADIK, ID sırasına göre FCFS)
-        for(int p=0; p<3; p++) {
-            for(int i=0; i<taskCount; i++) {
-                if(taskList[i].state == STATE_READY && taskList[i].currentPriority == p) {
-                    selectedTask = &taskList[i];
-                    goto TASK_FOUND;
-                }
-            }
-        }
+        while(iterator != NULL) {
+            if(iterator->state == STATE_READY) {
+                int isBetter = 0;
 
-        // ADIM B: Prio 3 (Round Robin - ARTIK FIFO MANTIĞI İLE ÇALIŞIYOR)
-        // Burada ID sırasına değil, Kuyruğa Giriş Zamanına (queueEntryTime) bakıyoruz.
-        if(selectedTask == NULL) {
-            SimTask *bestCandidate = NULL;
-            int minTime = 2147483647; // Max Int
-
-            for(int i=0; i<taskCount; i++) {
-                if(taskList[i].state == STATE_READY && taskList[i].currentPriority == 3) {
-                    // En küçük (en eski) zaman damgasını bul
-                    if(taskList[i].queueEntryTime < minTime) {
-                        minTime = taskList[i].queueEntryTime;
-                        bestCandidate = &taskList[i];
-                    }
-                    // Zamanlar eşitse ID'ye bak (Stabilite için)
-                    else if(taskList[i].queueEntryTime == minTime) {
-                        if(bestCandidate == NULL || taskList[i].id < bestCandidate->id) {
-                            bestCandidate = &taskList[i];
+                if(selectedTask == NULL) {
+                    isBetter = 1;
+                } else {
+                    // Kriter 1: Düşük Öncelik Değeri (0, 1, 2...)
+                    if(iterator->currentPriority < selectedTask->currentPriority) {
+                        isBetter = 1;
+                    } 
+                    // Kriter 2: Öncelikler Eşitse
+                    else if(iterator->currentPriority == selectedTask->currentPriority) {
+                        
+                        // HİBRİT MANTIK:
+                        // Eğer öncelik yüksekse (0, 1, 2) -> ID sıralaması (Eski düzen korunsun)
+                        if(iterator->currentPriority < 3) {
+                            if(iterator->id < selectedTask->id) {
+                                isBetter = 1;
+                            }
+                        }
+                        // Eğer öncelik düşükse (3, 4, 5...) -> KUYRUK ZAMANI (Round Robin FIFO)
+                        else {
+                            if(iterator->queueEntryTime < selectedTask->queueEntryTime) {
+                                isBetter = 1;
+                            }
+                            else if(iterator->queueEntryTime == selectedTask->queueEntryTime) {
+                                if(iterator->id < selectedTask->id) { // Zaman eşitse ID'ye bak
+                                    isBetter = 1;
+                                }
+                            }
                         }
                     }
                 }
+
+                if(isBetter) {
+                    selectedTask = iterator;
+                }
             }
-            selectedTask = bestCandidate;
+            iterator = iterator->next;
         }
 
-        TASK_FOUND:
-
+        // TASK FOUND
         if(selectedTask != NULL) {
             
-            // İsim Atama
             if(selectedTask->nameAssigned == 0) {
                 snprintf(selectedTask->displayName, 20, "task%d", dynamicNameCounter++);
                 selectedTask->nameAssigned = 1;
@@ -201,23 +249,18 @@ void vSchedulerController(void *pvParameters)
                 lastScheduledTaskId = -1; 
             } 
             else {
-                // YENİ: Görev çalıştı, sırasını savdı. 
-                // Kuyruğun en arkasına geçmesi için zaman damgasını güncelliyoruz.
-                // Bu sayede Round Robin döngüsü sağlanır.
+                // KRİTİK DÜZELTME: 
+                // Görev çalıştı ve sırasını savdı. Artık kuyruğun en sonuna geçmeli.
+                // Zaman damgasını 'şu an' yapıyoruz. Böylece Round Robin'de en arkaya geçer.
                 selectedTask->queueEntryTime = globalTime;
 
-                // FEEDBACK
-                if(selectedTask->currentPriority > 0 && selectedTask->currentPriority < 3) {
+                // Feedback (Öncelik düşürme)
+                if(selectedTask->currentPriority > 0) {
                     selectedTask->currentPriority++; 
-                    asprintf(&msg, "%s askida (Prio Dusuruldu)", selectedTask->displayName);
-                    PrintTaskInfo(selectedTask, msg);
-                    free(msg);
-                } 
-                else if(selectedTask->currentPriority == 3) {
                     asprintf(&msg, "%s askida", selectedTask->displayName);
                     PrintTaskInfo(selectedTask, msg);
                     free(msg);
-                }
+                } 
                 
                 selectedTask->state = STATE_READY;
             }
@@ -227,16 +270,6 @@ void vSchedulerController(void *pvParameters)
             globalTime++;
             lastScheduledTaskId = -1;
             vTaskDelay(pdMS_TO_TICKS(75));
-        }
-
-        // ÇIKIŞ KONTROLÜ
-        int active = 0;
-        for(int i=0; i<taskCount; i++) {
-            if(taskList[i].state != STATE_TERMINATED) active++;
-        }
-        if(active == 0) {
-            printf("\n--- Tum gorevler tamamlandi ---\n");
-            exit(0);
         }
     }
 }
