@@ -10,7 +10,7 @@ void vGenericTask(void *pvParameters)
     
     for(;;)
     {
-        // İşlemci yükü simülasyonu
+        // İşlemci yükü simülasyonu 
         // Controller askıya alana kadar burada döner
         vTaskDelay(pdMS_TO_TICKS(10)); 
     }
